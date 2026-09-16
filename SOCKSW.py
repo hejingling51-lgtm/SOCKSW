@@ -16,7 +16,13 @@ st.set_page_config(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMAGE_DIR = os.path.join(BASE_DIR, "images")
 
-PRODUCT_IMAGES = "product1.jpg",
+PRODUCT_IMAGES = {
+    "product1": "product1.jpg",
+    "product2": "product2.jpg",
+    "product3": "product3.jpg",
+    "product4": "product4.jpg",
+    "product5": "product5.jpg",
+},
    
 DUCK_IMAGE = "duck.jpg"
 
