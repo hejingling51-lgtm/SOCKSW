@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import os
 import io
 import base64
@@ -22,8 +22,7 @@ PRODUCT_IMAGES = {
     "product3": "product3.jpg",
     "product4": "product4.jpg",
     "product5": "product5.jpg",
-},
-   
+}
 DUCK_IMAGE = "duck.jpg"
 
 
@@ -45,6 +44,7 @@ def make_duck_clean_cached(image_path,
         print("Duck image load error:", e)
         return None
 
+    # === 0. 旋轉 ===
     if rotate_degrees == 90:
         img = img.transpose(Image.ROTATE_90)
     elif rotate_degrees == 180:
@@ -52,10 +52,12 @@ def make_duck_clean_cached(image_path,
     elif rotate_degrees == 270:
         img = img.transpose(Image.ROTATE_270)
 
+    # === 1. 裁掉外框 ===
     if crop_border > 0:
         w, h = img.size
         img = img.crop((crop_border, crop_border, w - crop_border, h - crop_border))
 
+    # === 2. 去黑底 ===
     img = img.convert("RGBA")
     datas = img.getdata()
     new_data = []
@@ -69,6 +71,7 @@ def make_duck_clean_cached(image_path,
 
     img.putdata(new_data)
 
+    # === 3. 加粗 ===
     if thicken and thicken_passes > 0:
         alpha = img.split()[3]
         for _ in range(thicken_passes):
@@ -76,6 +79,7 @@ def make_duck_clean_cached(image_path,
         r, g, b, _ = img.split()
         img = Image.merge("RGBA", (r, g, b, alpha))
 
+    # === 4. 轉 base64 ===
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
@@ -100,7 +104,7 @@ def load_local_image_cached(filename):
 duck_path = os.path.join(IMAGE_DIR, DUCK_IMAGE)
 duck_b64 = make_duck_clean_cached(
     duck_path,
-    rotate_degrees=90,
+    rotate_degrees=90,     # ★ 先試 90；若腳朝上就改 270
     crop_border=8,
     line_threshold=40,
     line_color=(0, 0, 0),
@@ -152,39 +156,44 @@ st.markdown(f"""
         box-shadow: none;
     }}
 
+    /* ★ 母鴨：慢慢走 */
     .header-banner .duck-mother {{
         height: 72px;
         top: 22px;
         right: 250px;
-        animation: duckWalk 2.4s ease-in-out infinite;
+        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
         animation-delay: 0s;
         z-index: 10;
     }}
+    /* ★ 小鴨1：慢慢走，晚一點出發 */
     .header-banner .duck-duckling.d1 {{
         height: 24px;
         top: 52px;
         right: 195px;
-        animation: duckWalk 2.4s ease-in-out infinite;
-        animation-delay: 0.6s;
+        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
+        animation-delay: 0.6s;                           /* ★ 0.15s → 0.6s */
         z-index: 5;
     }}
+    /* ★ 小鴨2：慢慢走，再晚一點 */
     .header-banner .duck-duckling.d2 {{
         height: 18px;
         top: 58px;
         right: 150px;
-        animation: duckWalk 2.4s ease-in-out infinite;
-        animation-delay: 1.2s;
+        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
+        animation-delay: 1.2s;                           /* ★ 0.30s → 1.2s */
         z-index: 5;
     }}
+    /* ★ 小鴨3：慢慢走，最晚出發 */
     .header-banner .duck-duckling.d3 {{
         height: 13px;
         top: 63px;
         right: 112px;
-        animation: duckWalk 2.4s ease-in-out infinite;
-        animation-delay: 1.8s;
+        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
+        animation-delay: 1.8s;                           /* ★ 0.45s → 1.8s */
         z-index: 5;
     }}
 
+    /* ★ 慢慢走：往前走三步、往後走三步 */
     @keyframes duckWalk {{
         0%   {{ transform: translateX(0); }}
         15%  {{ transform: translateX(8px); }}
@@ -308,27 +317,21 @@ With years of experience in the textile industry, we are committed to providing 
         "form_submit": "Send Message",
         "form_success": "✅ Thank you! Your message has been received. We'll contact you soon.",
         "form_error": "⚠️ Please fill in all fields.",
-        "product1_name": "Bamboo fiber Socks",
+        "product1_name": "Sports Socks",
         "product1_desc": "Breathable, moisture-wicking, cushioned sole. Perfect for running and outdoor activities.",
-        "product1_price": "$ - $ / pair",
-        "product2_name": "No show Socks",
+        "product1_price": "$2.50 - $4.00 / pair",
+        "product2_name": "Business Socks",
         "product2_desc": "Elegant design, premium cotton blend. Comfortable for all-day office wear.",
-        "product2_price": "$ - $ / pair",
-        "product3_name": "No show Socks",
+        "product2_price": "$3.00 - $5.00 / pair",
+        "product3_name": "Casual Socks",
         "product3_desc": "Soft, colorful, and stylish. Great for everyday wear and gifts.",
-        "product3_price": "$ - $ / pair",
-        "product4_name": "No show Socks",
+        "product3_price": "$1.80 - $3.00 / pair",
+        "product4_name": "Custom OEM Socks",
         "product4_desc": "Your logo, your design, your colors. MOQ from 500 pairs. Free sample available.",
         "product4_price": "Negotiable",
-        "product5_name": "Organic cotton Socks",
+        "product5_name": "Kids Socks",
         "product5_desc": "Soft and safe for children. Various cute designs available.",
-        "product5_price": "$ - $ / pair",
-        "product6_name": "Organic cotton Socks",              # ★ 新增
-        "product6_desc": "Made from GOTS-certified organic cotton. Eco-friendly, soft, and hypoallergenic.",  # ★ 新增
-        "product6_price": "$ - $ / pair",              # ★ 新增
-        "product7_name": "Organic cotton Socks",                 # ★ 新增
-        "product7_desc": "Naturally antibacterial and deodorizing. Ultra-soft bamboo fiber for sensitive skin.",  # ★ 新增
-        "product7_price": "$ - $ / pair",              # ★ 新增
+        "product5_price": "$1.50 - $2.50 / pair",
         "footer": "© 2025 Gabriel-JL Co., Ltd. All rights reserved. | Contact: He YA | hejingling51@gmail.com",
         "lang_switch": "🇨🇳 中文",
         "advantages_title": "Our Advantages",
@@ -387,12 +390,6 @@ With years of experience in the textile industry, we are committed to providing 
         "product5_name": "兒童襪",
         "product5_desc": "柔軟安全，適合兒童。多款可愛設計可選。",
         "product5_price": "$1.50 - $2.50 / 雙",
-        "product6_name": "有機棉襪",                          # ★ 新增
-        "product6_desc": "採用 GOTS 認證有機棉製成。環保、柔軟、親膚低敏。",  # ★ 新增
-        "product6_price": "$3.50 - $6.00 / 雙",               # ★ 新增
-        "product7_name": "竹纖維襪",                          # ★ 新增
-        "product7_desc": "天然抗菌除臭。超柔軟竹纖維，適合敏感肌膚。",  # ★ 新增
-        "product7_price": "$4.00 - $7.00 / 雙",               # ★ 新增
         "footer": "© 2025 Gabriel-JL 有限公司 版權所有 | 聯絡人: He YA | hejingling51@gmail.com",
         "lang_switch": "🇬🇧 English",
         "advantages_title": "我們的優勢",
@@ -496,10 +493,6 @@ if page == T['nav_products']:
          "price": T['product4_price'], "emoji": "🎨"},
         {"key": "product5", "name": T['product5_name'], "desc": T['product5_desc'],
          "price": T['product5_price'], "emoji": "🧒"},
-        {"key": "product6", "name": T['product6_name'], "desc": T['product6_desc'],   # ★ 新增
-         "price": T['product6_price'], "emoji": "🌿"},                                 # ★ 新增
-        {"key": "product7", "name": T['product7_name'], "desc": T['product7_desc'],   # ★ 新增
-         "price": T['product7_price'], "emoji": "🎋"},                                 # ★ 新增
     ]
 
     cols = st.columns(2)
@@ -508,7 +501,7 @@ if page == T['nav_products']:
             st.markdown(f"### {prod['emoji']} {prod['name']}")
             img = load_local_image_cached(PRODUCT_IMAGES[prod["key"]])
             if img is not None:
-                st.image(img, use_container_width=True)
+                st.image(img, use_container_width="stretch")
             else:
                 st.markdown(f"""
                 <div style="background: linear-gradient(135deg, #f5f7fa, #e4e8ec);
