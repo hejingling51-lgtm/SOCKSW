@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import io
 import base64
-from PIL import Image, ImageFilter
+from PIL import Image, ImageFilter, ImageDraw
 
 # ==================== 頁面配置 ====================
 st.set_page_config(
@@ -22,105 +22,118 @@ PRODUCT_IMAGES = {
     "product3": "product3.jpg",
     "product4": "product4.jpg",
     "product5": "product5.jpg",
+    "product6": "product6.jpg",
+    "product7": "product7.jpg",
+    "product8": "product8.jpg",
+    "product9": "product9.jpg",
+    "product10": "product10.jpg",
 }
 DUCK_IMAGE = "duck.jpg"
 
 
-# ==================== 鴨子圖處理（加快取） ====================
-@st.cache_data(show_spinner=False)
-def make_duck_clean_cached(image_path,
-                           rotate_degrees=90,
-                           crop_border=8,
-                           line_threshold=40,
-                           line_color=(0, 0, 0),
-                           thicken=True,
-                           thicken_passes=2):
-    if not os.path.exists(image_path):
-        print("Duck image NOT FOUND:", image_path)
-        return None
-    try:
-        img = Image.open(image_path).convert("RGB")
-    except Exception as e:
-        print("Duck image load error:", e)
-        return None
+# ==================== 備援：用 PIL 畫一隻鴨子 ====================
+def _draw_fallback_duck(size=200):
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    s = size / 200.0
+    d.ellipse([40 * s, 90 * s, 160 * s, 170 * s], fill=(0, 0, 0, 255))
+    d.ellipse([120 * s, 40 * s, 180 * s, 100 * s], fill=(0, 0, 0, 255))
+    d.polygon([(120 * s, 70 * s), (140 * s, 70 * s),
+               (150 * s, 120 * s), (120 * s, 120 * s)], fill=(0, 0, 0, 255))
+    d.polygon([(178 * s, 68 * s), (200 * s, 78 * s), (178 * s, 88 * s)],
+              fill=(0, 0, 0, 255))
+    d.polygon([(40 * s, 110 * s), (10 * s, 90 * s), (40 * s, 140 * s)],
+              fill=(0, 0, 0, 255))
+    d.ellipse([155 * s, 60 * s, 165 * s, 70 * s], fill=(255, 255, 255, 255))
+    d.rectangle([70 * s, 165 * s, 80 * s, 195 * s], fill=(0, 0, 0, 255))
+    d.rectangle([110 * s, 165 * s, 120 * s, 195 * s], fill=(0, 0, 0, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
 
-    # === 0. 旋轉 ===
+
+# ==================== 鴨子圖處理（快取成功結果） ====================
+@st.cache_data(show_spinner=False)
+def _make_duck_from_file(image_path, rotate_degrees=90, crop_border=8,
+                         line_threshold=40, line_color=(0, 0, 0),
+                         thicken=True, thicken_passes=2):
+    img = Image.open(image_path).convert("RGB")
     if rotate_degrees == 90:
         img = img.transpose(Image.ROTATE_90)
     elif rotate_degrees == 180:
         img = img.transpose(Image.ROTATE_180)
     elif rotate_degrees == 270:
         img = img.transpose(Image.ROTATE_270)
-
-    # === 1. 裁掉外框 ===
     if crop_border > 0:
         w, h = img.size
         img = img.crop((crop_border, crop_border, w - crop_border, h - crop_border))
-
-    # === 2. 去黑底 ===
     img = img.convert("RGBA")
-    datas = img.getdata()
     new_data = []
-
-    for r, g, b, a in datas:
+    for r, g, b, a in img.getdata():
         brightness = 0.299 * r + 0.587 * g + 0.114 * b
         if brightness <= line_threshold:
             new_data.append((line_color[0], line_color[1], line_color[2], 255))
         else:
             new_data.append((0, 0, 0, 0))
-
     img.putdata(new_data)
-
-    # === 3. 加粗 ===
     if thicken and thicken_passes > 0:
         alpha = img.split()[3]
         for _ in range(thicken_passes):
             alpha = alpha.filter(ImageFilter.MaxFilter(3))
         r, g, b, _ = img.split()
         img = Image.merge("RGBA", (r, g, b, alpha))
-
-    # === 4. 轉 base64 ===
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
 
 
-# ==================== 產品圖片讀取（加快取） ====================
+def make_duck_clean(image_path, **kwargs):
+    if not os.path.exists(image_path):
+        return _draw_fallback_duck()
+    try:
+        return _make_duck_from_file(image_path, **kwargs)
+    except Exception as e:
+        print("Duck image error:", e)
+        return _draw_fallback_duck()
+
+
+# ==================== 產品圖片讀取（快取 base64） ====================
 @st.cache_data(show_spinner=False)
-def load_local_image_cached(filename):
+def load_image_b64(filename):
     path = os.path.join(IMAGE_DIR, filename)
-    if os.path.exists(path):
-        try:
-            return Image.open(path).copy()
-        except Exception as e:
-            print("Image load error:", path, e)
-            return None
-    else:
-        print("Image NOT FOUND:", path)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+        img = Image.open(io.BytesIO(raw))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        max_side = 1200
+        if max(img.size) > max_side:
+            ratio = max_side / max(img.size)
+            img = img.resize((int(img.width * ratio), int(img.height * ratio)),
+                             Image.LANCZOS)
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return base64.b64encode(buf.getvalue()).decode()
+    except Exception as e:
+        print("Image load error:", path, e)
         return None
 
 
 # ==================== 載入鴨子圖 ====================
 duck_path = os.path.join(IMAGE_DIR, DUCK_IMAGE)
-duck_b64 = make_duck_clean_cached(
-    duck_path,
-    rotate_degrees=90,     # ★ 先試 90；若腳朝上就改 270
-    crop_border=8,
-    line_threshold=40,
-    line_color=(0, 0, 0),
-    thicken=True,
-    thicken_passes=2
-)
+duck_b64 = make_duck_clean(duck_path, rotate_degrees=90, crop_border=8,
+                           line_threshold=40, line_color=(0, 0, 0),
+                           thicken=True, thicken_passes=2)
 
-if duck_b64 is not None:
-    duck_src = f"data:image/png;base64,{duck_b64}"
-    mother_html = f'<img src="{duck_src}" class="duck-img duck-mother" alt="mother duck">'
-    duckling1_html = f'<img src="{duck_src}" class="duck-img duck-duckling d1" alt="duckling1">'
-    duckling2_html = f'<img src="{duck_src}" class="duck-img duck-duckling d2" alt="duckling2">'
-    duckling3_html = f'<img src="{duck_src}" class="duck-img duck-duckling d3" alt="duckling3">'
-    ducks_html = mother_html + duckling1_html + duckling2_html + duckling3_html
-else:
-    ducks_html = ""
+duck_src = "data:image/png;base64," + duck_b64
+ducks_html = (
+    '<img src="' + duck_src + '" class="duck-img duck-big" alt="big duck">'
+    '<img src="' + duck_src + '" class="duck-img duck-medium" alt="medium duck">'
+    '<img src="' + duck_src + '" class="duck-img duck-small" alt="small duck">'
+)
 
 
 # ==================== 網頁瀏覽計次器 ====================
@@ -130,11 +143,11 @@ st.session_state.visit_count += 1
 
 
 # ==================== 自訂 CSS ====================
-st.markdown(f"""
+CSS = """
 <style>
-    * {{ font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }}
+    * { font-family: 'Helvetica Neue', 'Microsoft YaHei', sans-serif; }
 
-    .header-banner {{
+    .header-banner {
         position: relative;
         background: linear-gradient(135deg, #a8b8e8 0%, #b8a8e0 50%, #9fa8e0 100%);
         padding: 1.5rem 2rem;
@@ -143,10 +156,10 @@ st.markdown(f"""
         margin-bottom: 1.5rem;
         box-shadow: 0 4px 16px rgba(168, 184, 232, 0.4);
         overflow: hidden;
-        min-height: 150px;
-    }}
+        min-height: 170px;
+    }
 
-    .header-banner .duck-img {{
+    .header-banner .duck-img {
         position: absolute;
         pointer-events: none;
         width: auto;
@@ -154,134 +167,88 @@ st.markdown(f"""
         border: none;
         outline: none;
         box-shadow: none;
-    }}
+    }
 
-    /* ★ 母鴨：慢慢走 */
-    .header-banner .duck-mother {{
-        height: 72px;
-        top: 22px;
-        right: 250px;
-        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
-        animation-delay: 0s;
-        z-index: 10;
-    }}
-    /* ★ 小鴨1：慢慢走，晚一點出發 */
-    .header-banner .duck-duckling.d1 {{
-        height: 24px;
-        top: 52px;
-        right: 195px;
-        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
-        animation-delay: 0.6s;                           /* ★ 0.15s → 0.6s */
-        z-index: 5;
-    }}
-    /* ★ 小鴨2：慢慢走，再晚一點 */
-    .header-banner .duck-duckling.d2 {{
-        height: 18px;
-        top: 58px;
-        right: 150px;
-        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
-        animation-delay: 1.2s;                           /* ★ 0.30s → 1.2s */
-        z-index: 5;
-    }}
-    /* ★ 小鴨3：慢慢走，最晚出發 */
-    .header-banner .duck-duckling.d3 {{
-        height: 13px;
-        top: 63px;
-        right: 112px;
-        animation: duckWalk 2.4s ease-in-out infinite;   /* ★ 0.6s → 2.4s */
-        animation-delay: 1.8s;                           /* ★ 0.45s → 1.8s */
-        z-index: 5;
-    }}
+    .header-banner .duck-big {
+        height: 90px; top: 25px; right: 300px;
+        animation: duckWalk 3.0s ease-in-out infinite;
+        animation-delay: 0s; z-index: 10;
+    }
+    .header-banner .duck-medium {
+        height: 55px; top: 55px; right: 210px;
+        animation: duckWalk 3.0s ease-in-out infinite;
+        animation-delay: 0.5s; z-index: 8;
+    }
+    .header-banner .duck-small {
+        height: 32px; top: 80px; right: 140px;
+        animation: duckWalk 3.0s ease-in-out infinite;
+        animation-delay: 1.0s; z-index: 6;
+    }
 
-    /* ★ 慢慢走：往前走三步、往後走三步 */
-    @keyframes duckWalk {{
-        0%   {{ transform: translateX(0); }}
-        15%  {{ transform: translateX(8px); }}
-        30%  {{ transform: translateX(0); }}
-        45%  {{ transform: translateX(-8px); }}
-        60%  {{ transform: translateX(0); }}
-        100% {{ transform: translateX(0); }}
-    }}
+    @keyframes duckWalk {
+        0%   { transform: translateX(0); }
+        10%  { transform: translateX(10px); }
+        20%  { transform: translateX(20px); }
+        30%  { transform: translateX(30px); }
+        40%  { transform: translateX(40px); }
+        50%  { transform: translateX(50px); }
+        60%  { transform: translateX(40px); }
+        70%  { transform: translateX(30px); }
+        80%  { transform: translateX(20px); }
+        90%  { transform: translateX(10px); }
+        100% { transform: translateX(0); }
+    }
 
-    .header-banner h1 {{
-        color: #ffffff;
-        font-size: 1.8rem;
-        margin: 0;
-        letter-spacing: 1.5px;
-        position: relative;
-        z-index: 20;
-        padding-right: 340px;
-        text-align: left;
-    }}
-    .header-banner p {{
-        color: #ffffff;
-        font-size: 1rem;
-        margin-top: 0.3rem;
-        font-weight: 300;
-        position: relative;
-        z-index: 20;
-        padding-right: 340px;
-        text-align: left;
-    }}
+    .header-banner h1 {
+        color: #ffffff; font-size: 1.8rem; margin: 0;
+        letter-spacing: 1.5px; position: relative; z-index: 20;
+        padding-right: 400px; text-align: left;
+    }
+    .header-banner p {
+        color: #ffffff; font-size: 1rem; margin-top: 0.3rem;
+        font-weight: 300; position: relative; z-index: 20;
+        padding-right: 400px; text-align: left;
+    }
 
-    .visit-counter {{
-        display: inline-flex;
-        align-items: center;
-        gap: 0.6rem;
-        background: rgba(255,255,255,0.85);
-        border: 2px solid #1a1a1a;
-        border-radius: 40px;
-        padding: 0.4rem 1.2rem;
-        font-family: monospace;
-        font-size: 1rem;
-        color: #1a1a1a;
-        margin-bottom: 1rem;
-    }}
-    .visit-counter .num {{
-        font-weight: 700;
-        font-size: 1.4rem;
-        color: #000;
-    }}
+    .visit-counter {
+        display: inline-flex; align-items: center; gap: 0.6rem;
+        background: rgba(255,255,255,0.85); border: 2px solid #1a1a1a;
+        border-radius: 40px; padding: 0.4rem 1.2rem;
+        font-family: monospace; font-size: 1rem;
+        color: #1a1a1a; margin-bottom: 1rem;
+    }
+    .visit-counter .num { font-weight: 700; font-size: 1.4rem; color: #000; }
 
-    .product-card {{
-        background: #ffffff;
-        border-radius: 12px;
-        padding: 1rem;
+    .product-card {
+        background: #ffffff; border-radius: 12px; padding: 1rem;
         box-shadow: 0 4px 16px rgba(0,0,0,0.1);
         transition: transform 0.3s ease, box-shadow 0.3s ease;
-        margin-bottom: 1rem;
-        border: 1px solid #f0f0f0;
-    }}
-    .product-card:hover {{
+        margin-bottom: 1rem; border: 1px solid #f0f0f0;
+    }
+    .product-card:hover {
         transform: translateY(-4px);
         box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-    }}
-    .product-card h3 {{ color: #16213e; margin-bottom: 0.3rem; }}
-    .product-card .price {{ color: #e94560; font-size: 1.3rem; font-weight: bold; }}
-    .product-card .desc {{ color: #555; font-size: 0.95rem; line-height: 1.6; }}
+    }
+    .product-card .price { color: #e94560; font-size: 1.3rem; font-weight: bold; }
+    .product-card .desc { color: #555; font-size: 0.95rem; line-height: 1.6; }
 
-    .contact-card {{
+    .contact-card {
         background: linear-gradient(135deg, #0f3460, #16213e);
-        color: #fff;
-        border-radius: 12px;
-        padding: 2rem;
-        text-align: center;
-    }}
-    .contact-card a {{ color: #e94560; text-decoration: none; }}
+        color: #fff; border-radius: 12px; padding: 2rem; text-align: center;
+    }
+    .contact-card a { color: #e94560; text-decoration: none; }
 
-    .footer {{
-        text-align: center;
-        padding: 2rem 0 1rem 0;
-        color: #888;
-        font-size: 0.85rem;
-        border-top: 1px solid #eee;
-        margin-top: 3rem;
-    }}
+    .footer {
+        text-align: center; padding: 2rem 0 1rem 0;
+        color: #888; font-size: 0.85rem;
+        border-top: 1px solid #eee; margin-top: 3rem;
+    }
 
-    #MainMenu {{visibility: hidden;}}
-    footer {{visibility: hidden;}}
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
 </style>
-""", unsafe_allow_html=True)
+"""
+st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ==================== 雙語字典 ====================
@@ -329,9 +296,24 @@ With years of experience in the textile industry, we are committed to providing 
         "product4_name": "Custom OEM Socks",
         "product4_desc": "Your logo, your design, your colors. MOQ from 500 pairs. Free sample available.",
         "product4_price": "Negotiable",
-        "product5_name": "Kids Socks",
-        "product5_desc": "Soft and safe for children. Various cute designs available.",
-        "product5_price": "$1.50 - $2.50 / pair",
+        "product5_name": "Ankle Socks",
+        "product5_desc": "Low-cut, invisible design. Perfect for sneakers and casual shoes.",
+        "product5_price": "$1.50 - $2.60 / pair",
+        "product6_name": "Kids Socks",
+        "product6_desc": "Soft and safe for children. Various cute designs available.",
+        "product6_price": "$1.50 - $2.50 / pair",
+        "product7_name": "Baby Socks",
+        "product7_desc": "Ultra-soft cotton for newborns. Anti-slip sole and gentle elastic band.",
+        "product7_price": "$1.20 - $2.00 / pair",
+        "product8_name": "School Socks",
+        "product8_desc": "Durable knee-high socks for school uniforms. Easy to wash and keep white.",
+        "product8_price": "$1.60 - $2.80 / pair",
+        "product9_name": "Toddler Socks",
+        "product9_desc": "Fun cartoon patterns for toddlers. Non-slip grip and breathable fabric.",
+        "product9_price": "$1.30 - $2.20 / pair",
+        "product10_name": "Teen Sports Socks",
+        "product10_desc": "Athletic socks for teenagers. Cushioned, durable, and colorful.",
+        "product10_price": "$2.00 - $3.50 / pair",
         "footer": "© 2025 Gabriel-JL Co., Ltd. All rights reserved. | Contact: He YA | hejingling51@gmail.com",
         "lang_switch": "🇨🇳 中文",
         "advantages_title": "Our Advantages",
@@ -343,6 +325,10 @@ With years of experience in the textile industry, we are committed to providing 
         ],
         "no_photo": "Photo coming soon",
         "photo_hint": "Put your product photos into the `images/` folder with these names:",
+        "cat_all": "🧦 All Products",
+        "cat_children": "🧒 Children SOCKS",
+        "cat_adult": "🧑 Adult SOCKS",
+        "cat_label": "Category",
     },
     "zh": {
         "title": "Gabriel-JL 有限公司",
@@ -387,9 +373,24 @@ With years of experience in the textile industry, we are committed to providing 
         "product4_name": "訂製 OEM 襪子",
         "product4_desc": "您的Logo、您的設計、您的顏色。起訂量500雙起，可提供免費樣品。",
         "product4_price": "面議",
-        "product5_name": "兒童襪",
-        "product5_desc": "柔軟安全，適合兒童。多款可愛設計可選。",
-        "product5_price": "$1.50 - $2.50 / 雙",
+        "product5_name": "船襪 / 隱形襪",
+        "product5_desc": "低筒隱形設計。完美搭配運動鞋與休閒鞋。",
+        "product5_price": "$1.50 - $2.60 / 雙",
+        "product6_name": "兒童襪",
+        "product6_desc": "柔軟安全，適合兒童。多款可愛設計可選。",
+        "product6_price": "$1.50 - $2.50 / 雙",
+        "product7_name": "嬰兒襪",
+        "product7_desc": "超柔軟純棉，適合新生兒。防滑鞋底與溫和鬆緊帶。",
+        "product7_price": "$1.20 - $2.00 / 雙",
+        "product8_name": "學生襪",
+        "product8_desc": "耐穿及膝襪，適合校服。易洗滌、常保潔白。",
+        "product8_price": "$1.60 - $2.80 / 雙",
+        "product9_name": "幼兒襪",
+        "product9_desc": "趣味卡通圖案，適合幼兒。防滑設計、透氣材質。",
+        "product9_price": "$1.30 - $2.20 / 雙",
+        "product10_name": "青少年運動襪",
+        "product10_desc": "適合青少年的運動襪。加厚耐穿、色彩活潑。",
+        "product10_price": "$2.00 - $3.50 / 雙",
         "footer": "© 2025 Gabriel-JL 有限公司 版權所有 | 聯絡人: He YA | hejingling51@gmail.com",
         "lang_switch": "🇬🇧 English",
         "advantages_title": "我們的優勢",
@@ -401,7 +402,26 @@ With years of experience in the textile industry, we are committed to providing 
         ],
         "no_photo": "照片即將上傳",
         "photo_hint": "請將您的產品照片放入 `images/` 資料夾，檔名如下：",
+        "cat_all": "🧦 全部產品",
+        "cat_children": "🧒 兒童襪",
+        "cat_adult": "🧑 成人襪",
+        "cat_label": "產品分類",
     }
+}
+
+
+# ==================== 產品分類定義 ====================
+PRODUCT_CATEGORY = {
+    "product1": "adult",
+    "product2": "adult",
+    "product3": "adult",
+    "product4": "adult",
+    "product5": "adult",
+    "product6": "children",
+    "product7": "children",
+    "product8": "children",
+    "product9": "children",
+    "product10": "children",
 }
 
 
@@ -412,11 +432,14 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "form_status" not in st.session_state:
     st.session_state.form_status = None
+if "category" not in st.session_state:
+    st.session_state.category = "all"
 
 
 # ==================== 回調 ====================
 def toggle_lang():
     st.session_state.lang = "zh" if st.session_state.lang == "en" else "en"
+
 
 def handle_form_submit():
     name = st.session_state.get("input_name", "").strip()
@@ -437,38 +460,63 @@ T = TEXTS[st.session_state.lang]
 
 
 # ==================== 頂部橫幅 ====================
-st.markdown(f"""
-<div class="header-banner">
-    {ducks_html}
-    <h1>{T['title']}</h1>
-    <p>{T['subtitle']}</p>
-</div>
-""", unsafe_allow_html=True)
+banner_html = (
+    '<div class="header-banner">' + ducks_html +
+    '<h1>' + T["title"] + '</h1>' +
+    '<p>' + T["subtitle"] + '</p>' +
+    '</div>'
+)
+st.markdown(banner_html, unsafe_allow_html=True)
 
 # ==================== 瀏覽計次器 ====================
-st.markdown(f"""
-<div class="visit-counter">
-    <span>👀 瀏覽次數</span>
-    <span class="num">{st.session_state.visit_count:,}</span>
-</div>
-""", unsafe_allow_html=True)
+counter_html = (
+    '<div class="visit-counter">'
+    '<span>👀 瀏覽次數</span>'
+    '<span class="num">' + f"{st.session_state.visit_count:,}" + '</span>'
+    '</div>'
+)
+st.markdown(counter_html, unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns([1, 6, 1])
 with col3:
-    if st.button(T['lang_switch'], key="lang_btn"):
+    if st.button(T["lang_switch"], key="lang_btn"):
         toggle_lang()
         st.rerun()
 
 
 # ==================== 側邊欄 ====================
 with st.sidebar:
-    st.markdown(f"### 🧦 {T['title']}")
+    st.markdown("### 🧦 " + T["title"])
     st.markdown("---")
     page = st.radio(
         "Navigation",
-        [T['nav_products'], T['nav_about'], T['nav_contact']],
+        [T["nav_products"], T["nav_about"], T["nav_contact"]],
         label_visibility="collapsed"
     )
+
+    if page == T["nav_products"]:
+        st.markdown("---")
+        st.markdown("**" + T["cat_label"] + "**")
+        cat_options = {
+            "all": T["cat_all"],
+            "children": T["cat_children"],
+            "adult": T["cat_adult"],
+        }
+        cat_keys = list(cat_options.keys())
+        cat_labels = list(cat_options.values())
+        try:
+            current_idx = cat_keys.index(st.session_state.category)
+        except ValueError:
+            current_idx = 0
+        selected_label = st.radio(
+            "Category",
+            cat_labels,
+            index=current_idx,
+            label_visibility="collapsed",
+            key="cat_radio"
+        )
+        st.session_state.category = cat_keys[cat_labels.index(selected_label)]
+
     st.markdown("---")
     st.markdown("**📧 Email:**  \nhejingling51@gmail.com")
     st.markdown("**👤 Contact:**  \nHe YA")
@@ -477,98 +525,128 @@ with st.sidebar:
 
 
 # ==================== 產品展示 ====================
-if page == T['nav_products']:
-    st.markdown(f"## {T['products_title']}")
-    st.markdown(f"*{T['products_desc']}*")
+if page == T["nav_products"]:
+    st.markdown("## " + T["products_title"])
+    st.markdown("*" + T["products_desc"] + "*")
     st.markdown("---")
 
-    products = [
-        {"key": "product1", "name": T['product1_name'], "desc": T['product1_desc'],
-         "price": T['product1_price'], "emoji": "🏃"},
-        {"key": "product2", "name": T['product2_name'], "desc": T['product2_desc'],
-         "price": T['product2_price'], "emoji": "👔"},
-        {"key": "product3", "name": T['product3_name'], "desc": T['product3_desc'],
-         "price": T['product3_price'], "emoji": "🧦"},
-        {"key": "product4", "name": T['product4_name'], "desc": T['product4_desc'],
-         "price": T['product4_price'], "emoji": "🎨"},
-        {"key": "product5", "name": T['product5_name'], "desc": T['product5_desc'],
-         "price": T['product5_price'], "emoji": "🧒"},
+    all_products = [
+        {"key": "product1", "name": T["product1_name"], "desc": T["product1_desc"],
+         "price": T["product1_price"], "emoji": "🏃"},
+        {"key": "product2", "name": T["product2_name"], "desc": T["product2_desc"],
+         "price": T["product2_price"], "emoji": "👔"},
+        {"key": "product3", "name": T["product3_name"], "desc": T["product3_desc"],
+         "price": T["product3_price"], "emoji": "🧦"},
+        {"key": "product4", "name": T["product4_name"], "desc": T["product4_desc"],
+         "price": T["product4_price"], "emoji": "🎨"},
+        {"key": "product5", "name": T["product5_name"], "desc": T["product5_desc"],
+         "price": T["product5_price"], "emoji": "👟"},
+        {"key": "product6", "name": T["product6_name"], "desc": T["product6_desc"],
+         "price": T["product6_price"], "emoji": "🧒"},
+        {"key": "product7", "name": T["product7_name"], "desc": T["product7_desc"],
+         "price": T["product7_price"], "emoji": "👶"},
+        {"key": "product8", "name": T["product8_name"], "desc": T["product8_desc"],
+         "price": T["product8_price"], "emoji": "🎒"},
+        {"key": "product9", "name": T["product9_name"], "desc": T["product9_desc"],
+         "price": T["product9_price"], "emoji": "🧸"},
+        {"key": "product10", "name": T["product10_name"], "desc": T["product10_desc"],
+         "price": T["product10_price"], "emoji": "⚽"},
     ]
 
-    cols = st.columns(2)
-    for i, prod in enumerate(products):
-        with cols[i % 2]:
-            st.markdown(f"### {prod['emoji']} {prod['name']}")
-            img = load_local_image_cached(PRODUCT_IMAGES[prod["key"]])
-            if img is not None:
-                st.image(img, use_container_width="stretch")
-            else:
-                st.markdown(f"""
-                <div style="background: linear-gradient(135deg, #f5f7fa, #e4e8ec);
-                            border-radius: 10px; padding: 3rem; text-align: center;
-                            border: 2px dashed #ccc; color: #aaa;">
-                    <div style="font-size: 3rem;">{prod['emoji']}</div>
-                    <p>{T['no_photo']}</p>
-                </div>
-                """, unsafe_allow_html=True)
-            st.markdown(f"""
-            <div class="product-card">
-                <p class="desc">{prod['desc']}</p>
-                <p class="price">{prod['price']}</p>
-            </div>
-            """, unsafe_allow_html=True)
+    if st.session_state.category == "children":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "children"]
+        st.markdown("### " + T["cat_children"])
+    elif st.session_state.category == "adult":
+        products = [p for p in all_products if PRODUCT_CATEGORY[p["key"]] == "adult"]
+        st.markdown("### " + T["cat_adult"])
+    else:
+        products = all_products
 
-    with st.expander("📁 " + T['photo_hint']):
-        st.code("\n".join([f"images/{v}" for v in PRODUCT_IMAGES.values()]))
+    if not products:
+        st.info("No products in this category yet.")
+    else:
+        cols = st.columns(2)
+        for i, prod in enumerate(products):
+            with cols[i % 2]:
+                st.markdown("### " + prod["emoji"] + " " + prod["name"])
+                img_b64 = load_image_b64(PRODUCT_IMAGES[prod["key"]])
+                if img_b64:
+                    img_html = (
+                        '<img src="data:image/jpeg;base64,' + img_b64 + '" '
+                        'style="width:100%; border-radius:10px;" />'
+                    )
+                    st.markdown(img_html, unsafe_allow_html=True)
+                else:
+                    placeholder_html = (
+                        '<div style="background: linear-gradient(135deg, #f5f7fa, #e4e8ec);'
+                        'border-radius: 10px; padding: 3rem; text-align: center;'
+                        'border: 2px dashed #ccc; color: #aaa;">'
+                        '<div style="font-size: 3rem;">' + prod["emoji"] + '</div>'
+                        '<p>' + T["no_photo"] + '</p>'
+                        '</div>'
+                    )
+                    st.markdown(placeholder_html, unsafe_allow_html=True)
+                card_html = (
+                    '<div class="product-card">'
+                    '<p class="desc">' + prod["desc"] + '</p>'
+                    '<p class="price">' + prod["price"] + '</p>'
+                    '</div>'
+                )
+                st.markdown(card_html, unsafe_allow_html=True)
+
+    with st.expander("📁 " + T["photo_hint"]):
+        st.code("\n".join(["images/" + v for v in PRODUCT_IMAGES.values()]))
 
 
 # ==================== 關於我們 ====================
-elif page == T['nav_about']:
-    st.markdown(f"## {T['about_title']}")
+elif page == T["nav_about"]:
+    st.markdown("## " + T["about_title"])
     st.markdown("---")
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.markdown(T['about_text'])
+        st.markdown(T["about_text"])
     with col2:
-        st.markdown("""
-        <div class="contact-card">
-            <h3>📬 Contact</h3>
-            <p><strong>He YA</strong></p>
-            <p><a href="mailto:hejingling51@gmail.com">hejingling51@gmail.com</a></p>
-            <p style="margin-top:1rem; font-size:0.85rem; opacity:0.8;">
-                Gabriel-JL Co., Ltd.<br>
-                Socks Manufacturer & Exporter
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        contact_html = (
+            '<div class="contact-card">'
+            '<h3>📬 Contact</h3>'
+            '<p><strong>He YA</strong></p>'
+            '<p><a href="mailto:hejingling51@gmail.com">hejingling51@gmail.com</a></p>'
+            '<p style="margin-top:1rem; font-size:0.85rem; opacity:0.8;">'
+            'Gabriel-JL Co., Ltd.<br>'
+            'Socks Manufacturer & Exporter'
+            '</p>'
+            '</div>'
+        )
+        st.markdown(contact_html, unsafe_allow_html=True)
 
     st.markdown("---")
-    st.markdown(f"### 🏭 {T['advantages_title']}")
+    st.markdown("### 🏭 " + T["advantages_title"])
     adv_cols = st.columns(4)
-    for i, (icon, title, desc) in enumerate(T['advantages']):
+    for i, (icon, title, desc) in enumerate(T["advantages"]):
         with adv_cols[i]:
-            st.markdown(f"""
-            <div style="text-align:center; padding:1rem;">
-                <div style="font-size:2rem;">{icon}</div>
-                <h4>{title}</h4>
-                <p style="color:#777; font-size:0.9rem;">{desc}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            adv_html = (
+                '<div style="text-align:center; padding:1rem;">'
+                '<div style="font-size:2rem;">' + icon + '</div>'
+                '<h4>' + title + '</h4>'
+                '<p style="color:#777; font-size:0.9rem;">' + desc + '</p>'
+                '</div>'
+            )
+            st.markdown(adv_html, unsafe_allow_html=True)
 
 
 # ==================== 聯絡 / 留言 ====================
-elif page == T['nav_contact']:
-    st.markdown(f"## {T['contact_title']}")
-    st.markdown(f"*{T['contact_desc']}*")
+elif page == T["nav_contact"]:
+    st.markdown("## " + T["contact_title"])
+    st.markdown("*" + T["contact_desc"] + "*")
     st.markdown("---")
     col_form, col_info = st.columns([3, 2])
     with col_form:
         if st.session_state.form_status == "success":
-            st.success(T['form_success'])
+            st.success(T["form_success"])
             st.balloons()
             st.session_state.form_status = None
         elif st.session_state.form_status == "error":
-            st.error(T['form_error'])
+            st.error(T["form_error"])
             st.session_state.form_status = None
 
         for k in ("input_name", "input_email", "input_message"):
@@ -576,43 +654,42 @@ elif page == T['nav_contact']:
                 st.session_state[k] = ""
 
         with st.form("message_form", clear_on_submit=False):
-            st.text_input(T['form_name'], key="input_name", placeholder="John Doe / 張三")
-            st.text_input(T['form_email'], key="input_email", placeholder="you@example.com")
-            st.text_area(T['form_message'], key="input_message", placeholder="...", height=150)
-            st.form_submit_button(T['form_submit'], use_container_width=True, on_click=handle_form_submit)
+            st.text_input(T["form_name"], key="input_name", placeholder="John Doe / 張三")
+            st.text_input(T["form_email"], key="input_email", placeholder="you@example.com")
+            st.text_area(T["form_message"], key="input_message", placeholder="...", height=150)
+            st.form_submit_button(T["form_submit"], use_container_width=True,
+                                  on_click=handle_form_submit)
 
     with col_info:
-        st.markdown("""
-        <div class="contact-card">
-            <h3>📬 Contact Information</h3>
-            <hr style="border-color: rgba(255,255,255,0.2);">
-            <p><strong>Company:</strong><br>Gabriel-JL Co., Ltd.</p>
-            <p><strong>Contact Person:</strong><br>He YA</p>
-            <p><strong>Email:</strong><br>
-                <a href="mailto:hejingling51@gmail.com" style="color:#e94560;">
-                    hejingling51@gmail.com
-                </a>
-            </p>
-            <hr style="border-color: rgba(255,255,255,0.2);">
-            <p style="font-size:0.85rem; opacity:0.8;">
-                We reply within 24 hours.<br>
-                我們會在24小時內回覆。
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        info_html = (
+            '<div class="contact-card">'
+            '<h3>📬 Contact Information</h3>'
+            '<hr style="border-color: rgba(255,255,255,0.2);">'
+            '<p><strong>Company:</strong><br>Gabriel-JL Co., Ltd.</p>'
+            '<p><strong>Contact Person:</strong><br>He YA</p>'
+            '<p><strong>Email:</strong><br>'
+            '<a href="mailto:hejingling51@gmail.com" style="color:#e94560;">'
+            'hejingling51@gmail.com</a></p>'
+            '<hr style="border-color: rgba(255,255,255,0.2);">'
+            '<p style="font-size:0.85rem; opacity:0.8;">'
+            'We reply within 24 hours.<br>我們會在24小時內回覆。'
+            '</p>'
+            '</div>'
+        )
+        st.markdown(info_html, unsafe_allow_html=True)
 
     if st.session_state.messages:
         st.markdown("---")
-        with st.expander(f"📋 Message History ({len(st.session_state.messages)})"):
+        with st.expander("📋 Message History (" + str(len(st.session_state.messages)) + ")"):
             for i, msg in enumerate(reversed(st.session_state.messages)):
-                st.markdown(f"**{msg['name']}** ({msg['email']})  \n*{msg['message']}*")
+                st.markdown(
+                    "**" + msg["name"] + "** (" + msg["email"] + ")  \n*" +
+                    msg["message"] + "*"
+                )
                 if i < len(st.session_state.messages) - 1:
                     st.markdown("---")
 
 
 # ==================== 頁腳 ====================
-st.markdown(f"""
-<div class="footer">
-    {T['footer']}
-</div>
-""", unsafe_allow_html=True)
+st.markdown('<div class="footer">' + T["footer"] + '</div>',
+            unsafe_allow_html=True)
